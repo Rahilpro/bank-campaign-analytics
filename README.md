@@ -22,8 +22,7 @@ factors driving term deposit subscriptions.
 - Point-biserial correlation: duration r=0.45 (strongest predictor)
 
 ## Dashboard
-- Live Power BI: [click here](your powerbi link)
-- Interactive HTML: [click here](your github pages link)
+- Live Power BI: https://app.powerbi.com/view?r=eyJrIjoiMTcxMjg3YzItYTJkYi00MTIwLWE1OGQtNTVmZjU1YTMyMTM2IiwidCI6Ijk2NDY0YThhLWY4ZWQtNDBiMS05OWUyLTVmNmI1MGEyMDI1MCIsImMiOjN9
 
 ## Dataset
 UCI Bank Marketing Dataset — 11,162 rows, 17 columns
