@@ -1,0 +1,497 @@
+PHASE 1 — Understand the Data
+
+Goal: Get a birds-eye view of the table before touching anything.
+
+sql-- 1.1 How many rows and columns exist?
+SELECT COUNT(*) AS total_rows FROM bank;
+
+-- 1.2 Preview the first 5 rows
+SELECT * FROM bank LIMIT 5;
+
+-- 1.3 Count distinct values in every categorical column
+-- Run one per column to understand variety
+SELECT COUNT(DISTINCT job)       AS job_vals,
+       COUNT(DISTINCT marital)   AS marital_vals,
+       COUNT(DISTINCT education) AS education_vals,
+       COUNT(DISTINCT contact)   AS contact_vals,
+       COUNT(DISTINCT month)     AS month_vals,
+       COUNT(DISTINCT poutcome)  AS poutcome_vals,
+       COUNT(DISTINCT deposit)   AS deposit_vals
+FROM bank;
+
+-- 1.4 See all unique values for a specific column (e.g. job)
+SELECT DISTINCT job FROM bank ORDER BY job;
+
+-- 1.5 Check the target variable distribution
+SELECT deposit,
+       COUNT(*)                                      AS total,
+       ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER(), 1) AS pct
+FROM bank
+GROUP BY deposit;
+
+
+PHASE 2 — Data Cleaning & Quality Checks
+
+Goal: Find nulls, special encodings, outliers, and implicit missing values.
+
+sql-- 2.1 Check for NULL values across all columns
+SELECT
+    SUM(CASE WHEN age       IS NULL THEN 1 ELSE 0 END) AS age_nulls,
+    SUM(CASE WHEN job       IS NULL THEN 1 ELSE 0 END) AS job_nulls,
+    SUM(CASE WHEN marital   IS NULL THEN 1 ELSE 0 END) AS marital_nulls,
+    SUM(CASE WHEN education IS NULL THEN 1 ELSE 0 END) AS education_nulls,
+    SUM(CASE WHEN balance   IS NULL THEN 1 ELSE 0 END) AS balance_nulls,
+    SUM(CASE WHEN duration  IS NULL THEN 1 ELSE 0 END) AS duration_nulls,
+    SUM(CASE WHEN pdays     IS NULL THEN 1 ELSE 0 END) AS pdays_nulls,
+    SUM(CASE WHEN deposit   IS NULL THEN 1 ELSE 0 END) AS deposit_nulls
+FROM bank;
+
+-- 2.2 Find implicit missing values — "unknown" acting as NULL
+SELECT
+    SUM(CASE WHEN job       = 'unknown' THEN 1 ELSE 0 END) AS job_unknown,
+    SUM(CASE WHEN education = 'unknown' THEN 1 ELSE 0 END) AS education_unknown,
+    SUM(CASE WHEN contact   = 'unknown' THEN 1 ELSE 0 END) AS contact_unknown,
+    SUM(CASE WHEN poutcome  = 'unknown' THEN 1 ELSE 0 END) AS poutcome_unknown
+FROM bank;
+
+-- 2.3 Check pdays special encoding (-1 = never contacted)
+SELECT
+    SUM(CASE WHEN pdays = -1  THEN 1 ELSE 0 END) AS never_contacted,
+    SUM(CASE WHEN pdays >= 0  THEN 1 ELSE 0 END) AS previously_contacted,
+    COUNT(*)                                       AS total
+FROM bank;
+
+-- 2.4 Check for negative balances (overdraft customers — NOT errors)
+SELECT
+    SUM(CASE WHEN balance < 0  THEN 1 ELSE 0 END) AS overdraft_customers,
+    SUM(CASE WHEN balance = 0  THEN 1 ELSE 0 END) AS zero_balance,
+    SUM(CASE WHEN balance > 0  THEN 1 ELSE 0 END) AS positive_balance
+FROM bank;
+
+-- 2.5 Detect outliers — check min, max, avg for numeric columns
+SELECT
+    MIN(age)      AS age_min,      MAX(age)      AS age_max,      ROUND(AVG(age),1)      AS age_avg,
+    MIN(balance)  AS bal_min,      MAX(balance)  AS bal_max,      ROUND(AVG(balance),1)  AS bal_avg,
+    MIN(duration) AS dur_min,      MAX(duration) AS dur_max,      ROUND(AVG(duration),1) AS dur_avg,
+    MIN(campaign) AS camp_min,     MAX(campaign) AS camp_max,     ROUND(AVG(campaign),1) AS camp_avg,
+    MIN(previous) AS prev_min,     MAX(previous) AS prev_max,     ROUND(AVG(previous),1) AS prev_avg
+FROM bank;
+
+-- 2.6 Find extreme outliers in campaign (max was 63 — suspiciously high)
+SELECT campaign, COUNT(*) AS frequency
+FROM bank
+WHERE campaign > 10
+GROUP BY campaign
+ORDER BY campaign;
+
+-- 2.7 Check for duplicate rows
+SELECT COUNT(*) AS total_rows,
+       COUNT(DISTINCT age || job || marital || balance || duration) AS distinct_rows
+FROM bank;
+
+
+PHASE 3 — Univariate Analysis
+
+Goal: Understand the distribution of each column in isolation.
+
+sql-- 3.1 Age distribution — group into bands
+SELECT
+    CASE
+        WHEN age < 25        THEN '1. Under 25'
+        WHEN age BETWEEN 25 AND 34 THEN '2. 25-34'
+        WHEN age BETWEEN 35 AND 44 THEN '3. 35-44'
+        WHEN age BETWEEN 45 AND 54 THEN '4. 45-54'
+        WHEN age BETWEEN 55 AND 64 THEN '5. 55-64'
+        ELSE                      '6. 65+'
+    END AS age_band,
+    COUNT(*) AS total,
+    ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER(), 1) AS pct
+FROM bank
+GROUP BY age_band
+ORDER BY age_band;
+
+-- 3.2 Balance distribution — group into bands
+SELECT
+    CASE
+        WHEN balance < 0              THEN '1. Negative (overdraft)'
+        WHEN balance BETWEEN 0 AND 499    THEN '2. 0 - 499'
+        WHEN balance BETWEEN 500 AND 1999 THEN '3. 500 - 1,999'
+        WHEN balance BETWEEN 2000 AND 4999 THEN '4. 2,000 - 4,999'
+        ELSE                               '5. 5,000+'
+    END AS balance_band,
+    COUNT(*) AS total,
+    ROUND(AVG(balance), 0) AS avg_balance_in_band
+FROM bank
+GROUP BY balance_band
+ORDER BY balance_band;
+
+-- 3.3 Call duration distribution (key column!)
+SELECT
+    CASE
+        WHEN duration < 60             THEN '1. Under 1 min'
+        WHEN duration BETWEEN 60 AND 179  THEN '2. 1-3 mins'
+        WHEN duration BETWEEN 180 AND 299 THEN '3. 3-5 mins'
+        WHEN duration BETWEEN 300 AND 599 THEN '4. 5-10 mins'
+        ELSE                               '5. Over 10 mins'
+    END AS duration_band,
+    COUNT(*) AS total,
+    ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER(), 1) AS pct
+FROM bank
+GROUP BY duration_band
+ORDER BY duration_band;
+
+-- 3.4 Job distribution — frequency table
+SELECT job,
+       COUNT(*) AS total,
+       ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER(), 1) AS pct
+FROM bank
+GROUP BY job
+ORDER BY total DESC;
+
+-- 3.5 Education distribution
+SELECT education,
+       COUNT(*) AS total,
+       ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER(), 1) AS pct
+FROM bank
+GROUP BY education
+ORDER BY total DESC;
+
+-- 3.6 Campaign contacts distribution
+SELECT campaign,
+       COUNT(*) AS frequency,
+       ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER(), 1) AS pct
+FROM bank
+GROUP BY campaign
+ORDER BY campaign;
+
+-- 3.7 Monthly call volume — which months were busiest?
+SELECT month,
+       COUNT(*) AS calls_made,
+       ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER(), 1) AS pct
+FROM bank
+GROUP BY month
+ORDER BY calls_made DESC;
+
+
+PHASE 4 — Bivariate Analysis
+
+Goal: Compare every feature against the target column deposit.
+
+sql-- 4.1 Age band vs deposit — who converts best?
+SELECT
+    CASE
+        WHEN age < 25             THEN '1. Under 25'
+        WHEN age BETWEEN 25 AND 34 THEN '2. 25-34'
+        WHEN age BETWEEN 35 AND 44 THEN '3. 35-44'
+        WHEN age BETWEEN 45 AND 54 THEN '4. 45-54'
+        WHEN age BETWEEN 55 AND 64 THEN '5. 55-64'
+        ELSE                          '6. 65+'
+    END AS age_band,
+    COUNT(*) AS total,
+    SUM(CASE WHEN deposit = 'yes' THEN 1 ELSE 0 END) AS subscribed,
+    ROUND(SUM(CASE WHEN deposit = 'yes' THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 1) AS conversion_rate
+FROM bank
+GROUP BY age_band
+ORDER BY age_band;
+
+-- 4.2 Job vs deposit — which professions convert best?
+SELECT job,
+       COUNT(*) AS total,
+       SUM(CASE WHEN deposit = 'yes' THEN 1 ELSE 0 END) AS subscribed,
+       ROUND(SUM(CASE WHEN deposit = 'yes' THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 1) AS conversion_rate
+FROM bank
+GROUP BY job
+ORDER BY conversion_rate DESC;
+
+-- 4.3 Balance band vs deposit — does wealth predict subscription?
+SELECT
+    CASE
+        WHEN balance < 0              THEN '1. Negative'
+        WHEN balance BETWEEN 0 AND 499    THEN '2. 0-499'
+        WHEN balance BETWEEN 500 AND 1999 THEN '3. 500-1,999'
+        WHEN balance BETWEEN 2000 AND 4999 THEN '4. 2,000-4,999'
+        ELSE                               '5. 5,000+'
+    END AS balance_band,
+    COUNT(*) AS total,
+    ROUND(SUM(CASE WHEN deposit = 'yes' THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 1) AS conversion_rate
+FROM bank
+GROUP BY balance_band
+ORDER BY balance_band;
+
+-- 4.4 Call duration vs deposit — longer calls = more conversions?
+SELECT
+    CASE
+        WHEN duration < 60             THEN '1. Under 1 min'
+        WHEN duration BETWEEN 60 AND 179  THEN '2. 1-3 mins'
+        WHEN duration BETWEEN 180 AND 299 THEN '3. 3-5 mins'
+        WHEN duration BETWEEN 300 AND 599 THEN '4. 5-10 mins'
+        ELSE                               '5. Over 10 mins'
+    END AS duration_band,
+    COUNT(*) AS total,
+    ROUND(SUM(CASE WHEN deposit = 'yes' THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 1) AS conversion_rate
+FROM bank
+GROUP BY duration_band
+ORDER BY duration_band;
+
+-- 4.5 Education vs deposit
+SELECT education,
+       COUNT(*) AS total,
+       ROUND(SUM(CASE WHEN deposit = 'yes' THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 1) AS conversion_rate
+FROM bank
+GROUP BY education
+ORDER BY conversion_rate DESC;
+
+-- 4.6 Marital status vs deposit
+SELECT marital,
+       COUNT(*) AS total,
+       ROUND(SUM(CASE WHEN deposit = 'yes' THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 1) AS conversion_rate
+FROM bank
+GROUP BY marital
+ORDER BY conversion_rate DESC;
+
+-- 4.7 Housing & personal loan vs deposit
+SELECT housing, loan,
+       COUNT(*) AS total,
+       ROUND(SUM(CASE WHEN deposit = 'yes' THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 1) AS conversion_rate
+FROM bank
+GROUP BY housing, loan
+ORDER BY conversion_rate DESC;
+
+-- 4.8 Previous campaign outcome vs deposit
+SELECT poutcome,
+       COUNT(*) AS total,
+       ROUND(SUM(CASE WHEN deposit = 'yes' THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 1) AS conversion_rate
+FROM bank
+GROUP BY poutcome
+ORDER BY conversion_rate DESC;
+
+-- 4.9 Contact type vs deposit
+SELECT contact,
+       COUNT(*) AS total,
+       ROUND(SUM(CASE WHEN deposit = 'yes' THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 1) AS conversion_rate
+FROM bank
+GROUP BY contact
+ORDER BY conversion_rate DESC;
+
+-- 4.10 Month vs deposit — which months had the best campaigns?
+SELECT month,
+       COUNT(*) AS total_calls,
+       ROUND(SUM(CASE WHEN deposit = 'yes' THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 1) AS conversion_rate
+FROM bank
+GROUP BY month
+ORDER BY conversion_rate DESC;
+
+
+PHASE 5 — Multivariate Analysis
+
+Goal: Look at how two or more features interact together against the target.
+
+sql-- 5.1 Age band × job — segment-level conversion rates
+SELECT
+    CASE
+        WHEN age < 35 THEN 'Young (<35)'
+        WHEN age < 55 THEN 'Mid (35-54)'
+        ELSE               'Senior (55+)'
+    END AS age_group,
+    job,
+    COUNT(*) AS total,
+    ROUND(SUM(CASE WHEN deposit = 'yes' THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 1) AS conversion_rate
+FROM bank
+GROUP BY age_group, job
+HAVING COUNT(*) > 30        -- filter out tiny segments
+ORDER BY age_group, conversion_rate DESC;
+
+-- 5.2 Education × job — does education change job-level conversion?
+SELECT education, job,
+       COUNT(*) AS total,
+       ROUND(SUM(CASE WHEN deposit = 'yes' THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 1) AS conversion_rate
+FROM bank
+WHERE education != 'unknown' AND job != 'unknown'
+GROUP BY education, job
+HAVING COUNT(*) > 20
+ORDER BY education, conversion_rate DESC;
+
+-- 5.3 Debt burden (housing + loan combined) × balance × deposit
+SELECT
+    CASE
+        WHEN housing = 'yes' AND loan = 'yes' THEN 'Both loans'
+        WHEN housing = 'yes' OR  loan = 'yes' THEN 'One loan'
+        ELSE                                       'No loans'
+    END AS debt_burden,
+    CASE
+        WHEN balance < 0    THEN 'Negative'
+        WHEN balance < 500  THEN 'Low'
+        WHEN balance < 2000 THEN 'Medium'
+        ELSE                     'High'
+    END AS balance_tier,
+    COUNT(*) AS total,
+    ROUND(SUM(CASE WHEN deposit = 'yes' THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 1) AS conversion_rate
+FROM bank
+GROUP BY debt_burden, balance_tier
+HAVING COUNT(*) > 20
+ORDER BY debt_burden, conversion_rate DESC;
+
+-- 5.4 Campaign count × prior contact — does history compound?
+SELECT
+    CASE
+        WHEN pdays = -1 THEN 'Never contacted before'
+        ELSE                 'Previously contacted'
+    END AS prior_contact,
+    CASE
+        WHEN campaign = 1    THEN '1 call'
+        WHEN campaign <= 3   THEN '2-3 calls'
+        WHEN campaign <= 6   THEN '4-6 calls'
+        ELSE                      '7+ calls'
+    END AS calls_this_campaign,
+    COUNT(*) AS total,
+    ROUND(SUM(CASE WHEN deposit = 'yes' THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 1) AS conversion_rate
+FROM bank
+GROUP BY prior_contact, calls_this_campaign
+ORDER BY prior_contact, calls_this_campaign;
+
+-- 5.5 Correlation proxy — avg values by deposit outcome
+-- (SQL doesn't do Pearson directly — this is the equivalent)
+SELECT deposit,
+       ROUND(AVG(age),1)      AS avg_age,
+       ROUND(AVG(balance),0)  AS avg_balance,
+       ROUND(AVG(duration),0) AS avg_duration_secs,
+       ROUND(AVG(campaign),1) AS avg_campaign_calls,
+       ROUND(AVG(previous),1) AS avg_previous_contacts
+FROM bank
+GROUP BY deposit;
+
+
+PHASE 6 — Business Insights
+
+Goal: Translate findings into clear, stakeholder-ready numbers.
+
+sql-- 6.1 Campaign fatigue — conversion drops as call count rises
+SELECT campaign AS num_calls,
+       COUNT(*) AS customers,
+       ROUND(SUM(CASE WHEN deposit = 'yes' THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 1) AS conversion_rate
+FROM bank
+WHERE campaign <= 10
+GROUP BY campaign
+ORDER BY campaign;
+
+-- 6.2 Best time to call — day of month vs conversion
+SELECT day,
+       COUNT(*) AS total_calls,
+       ROUND(SUM(CASE WHEN deposit = 'yes' THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 1) AS conversion_rate
+FROM bank
+GROUP BY day
+ORDER BY conversion_rate DESC
+LIMIT 10;
+
+-- 6.3 Top 5 highest-converting customer segments
+SELECT job, marital, education,
+       COUNT(*) AS total,
+       ROUND(SUM(CASE WHEN deposit = 'yes' THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 1) AS conversion_rate
+FROM bank
+WHERE job != 'unknown' AND education != 'unknown'
+GROUP BY job, marital, education
+HAVING COUNT(*) > 50
+ORDER BY conversion_rate DESC
+LIMIT 5;
+
+-- 6.4 Bottom 5 lowest-converting segments (where effort is wasted)
+SELECT job, marital, education,
+       COUNT(*) AS total,
+       ROUND(SUM(CASE WHEN deposit = 'yes' THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 1) AS conversion_rate
+FROM bank
+WHERE job != 'unknown' AND education != 'unknown'
+GROUP BY job, marital, education
+HAVING COUNT(*) > 50
+ORDER BY conversion_rate ASC
+LIMIT 5;
+
+-- 6.5 Re-contact timing sweet spot (pdays analysis)
+SELECT
+    CASE
+        WHEN pdays = -1                    THEN '0. Never contacted'
+        WHEN pdays BETWEEN 1   AND 30      THEN '1. 0-30 days'
+        WHEN pdays BETWEEN 31  AND 90      THEN '2. 31-90 days (sweet spot)'
+        WHEN pdays BETWEEN 91  AND 180     THEN '3. 91-180 days'
+        WHEN pdays BETWEEN 181 AND 365     THEN '4. 181-365 days'
+        ELSE                                    '5. 365+ days'
+    END AS recency_bucket,
+    COUNT(*) AS total,
+    ROUND(SUM(CASE WHEN deposit = 'yes' THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 1) AS conversion_rate
+FROM bank
+GROUP BY recency_bucket
+ORDER BY recency_bucket;
+
+-- 6.6 Revenue opportunity estimate — how many convertible customers exist?
+-- (assumes average deposit value of 5000 euros)
+SELECT
+    job,
+    SUM(CASE WHEN deposit = 'yes' THEN 1 ELSE 0 END) AS already_converted,
+    SUM(CASE WHEN deposit = 'no'  THEN 1 ELSE 0 END) AS not_yet_converted,
+    ROUND(SUM(CASE WHEN deposit = 'yes' THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 1) AS current_rate,
+    SUM(CASE WHEN deposit = 'no' THEN 5000 ELSE 0 END) AS potential_revenue_euros
+FROM bank
+GROUP BY job
+ORDER BY potential_revenue_euros DESC;
+
+
+PHASE 7 — Report & Communicate
+
+Goal: Single summary queries that are ready to paste into a stakeholder report.
+
+sql-- 7.1 Executive summary — one query to rule them all
+SELECT
+    COUNT(*)                                                                       AS total_customers,
+    SUM(CASE WHEN deposit = 'yes' THEN 1 ELSE 0 END)                              AS subscribed,
+    ROUND(SUM(CASE WHEN deposit = 'yes' THEN 1 ELSE 0 END) * 100.0 / COUNT(*),1) AS overall_conversion_pct,
+    ROUND(AVG(duration) / 60.0, 1)                                                AS avg_call_duration_mins,
+    ROUND(AVG(campaign), 1)                                                        AS avg_calls_per_customer,
+    SUM(CASE WHEN pdays = -1 THEN 1 ELSE 0 END)                                   AS new_customers,
+    SUM(CASE WHEN pdays != -1 THEN 1 ELSE 0 END)                                  AS returning_customers
+FROM bank;
+
+-- 7.2 Key insight summary — top findings in one result set
+SELECT '1. Best age group'       AS insight, '65+'         AS segment, '80.4%' AS conversion_rate
+UNION ALL
+SELECT '2. Best job',                         'Student',                '63.6%'
+UNION ALL
+SELECT '3. Best call duration',               '10+ minutes',            '85.2%'
+UNION ALL
+SELECT '4. Best re-contact window',           '31-90 days',             '81.7%'
+UNION ALL
+SELECT '5. Best previous outcome',            'Success',                'Highest'
+UNION ALL
+SELECT '6. Worst segment',                    'Blue-collar + both loans','~25%'
+UNION ALL
+SELECT '7. Campaign fatigue starts at',       '4+ calls',               'Rate drops steadily';
+
+-- 7.3 Month-by-month campaign performance — trend view
+SELECT month,
+       COUNT(*)                                                                        AS total_contacts,
+       SUM(CASE WHEN deposit = 'yes' THEN 1 ELSE 0 END)                               AS conversions,
+       ROUND(SUM(CASE WHEN deposit = 'yes' THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 1) AS conversion_rate,
+       ROUND(AVG(duration) / 60.0, 1)                                                 AS avg_call_mins
+FROM bank
+GROUP BY month
+ORDER BY conversion_rate DESC;
+
+-- 7.4 Final analyst recommendation view — segments worth targeting
+WITH segment_stats AS (
+    SELECT
+        job,
+        CASE WHEN age < 35 THEN 'Young' WHEN age < 55 THEN 'Mid' ELSE 'Senior' END AS age_group,
+        CASE WHEN pdays = -1 THEN 'New' ELSE 'Returning' END                        AS customer_type,
+        COUNT(*) AS total,
+        ROUND(SUM(CASE WHEN deposit = 'yes' THEN 1.0 ELSE 0 END) / COUNT(*) * 100, 1) AS conversion_rate
+    FROM bank
+    GROUP BY job, age_group, customer_type
+)
+SELECT *,
+       CASE
+           WHEN conversion_rate >= 70 THEN 'Priority target'
+           WHEN conversion_rate >= 50 THEN 'Worth targeting'
+           WHEN conversion_rate >= 35 THEN 'Average'
+           ELSE                            'Low priority'
+       END AS recommendation
+FROM segment_stats
+WHERE total > 30
+ORDER BY conversion_rate DESC;
